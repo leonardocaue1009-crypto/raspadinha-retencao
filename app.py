@@ -72,8 +72,12 @@ function renderResults(){let q=buscaPremio.value.toLowerCase();let a=DATA.result
 async function load(){let r=await fetch('/api/admin/data');if(!r.ok)return;DATA=await r.json();nusers.textContent=DATA.users.length;ncredits.textContent=DATA.users.reduce((a,x)=>a+x.creditos,0);nresults.textContent=DATA.total_results;renderUsers();renderResults()}setInterval(()=>{if(!painel.classList.contains('hidden'))load()},5000)
 </script></body></html>"""
 @app.get("/")
-def home(): return Response(HOME.replace("__POSTER_PLACEHOLDER__",POSTER_SRC),mimetype="text/html")@app.get("/admin")
-def admin(): return Response(ADMIN,mimetype="text/html")
+def home():
+    return Response(HOME.replace("__POSTER_PLACEHOLDER__", POSTER_SRC), mimetype="text/html")
+
+@app.get("/admin")
+def admin():
+    return Response(ADMIN, mimetype="text/html")
 @app.post("/api/login")
 def api_login():
     m=str((request.get_json(silent=True) or {}).get("matricula","")).strip();c=conn();u=c.execute("SELECT * FROM users WHERE matricula=? AND ativo=1",(m,)).fetchone()
@@ -91,7 +95,11 @@ def api_admin_login():
     if check_password_hash(h,senha):session["admin"]=True;return jsonify(ok=True)
     return jsonify(ok=False),403
 @app.post("/api/admin/logout")
-def api_admin_logout():session.clear();return jsonify(ok=True)@app.get("/api/admin/data")
+def api_admin_logout():
+    session.clear()
+    return jsonify(ok=True)
+
+@app.get("/api/admin/data")
 def api_admin_data():
     if not is_admin():return jsonify(ok=False),403
     c=conn();users=[dict(x) for x in c.execute("SELECT matricula,nome,creditos FROM users WHERE ativo=1 ORDER BY nome")];results=[dict(x) for x in c.execute("SELECT id,matricula,nome,premio,data FROM results ORDER BY id DESC LIMIT 300")];total=c.execute("SELECT COUNT(*) n FROM results").fetchone()["n"];return jsonify(ok=True,users=users,results=results,total_results=total)
