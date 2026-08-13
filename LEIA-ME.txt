@@ -1,0 +1,16 @@
+ARQUIVOS PARA GITHUB/RENDER
+
+Suba para a raiz do repositório:
+- app.py
+- requirements.txt
+- render.yaml
+
+Não precisa criar pastas.
+
+Senha ADM inicial: 507357
+No Render, crie a variável de ambiente ADMIN_PASSWORD para trocar a senha.
+
+Atenção: esta versão usa banco SQLite no armazenamento temporário do Render.
+Serve para teste e demonstração. Em reinicializações do serviço gratuito,
+os dados podem ser apagados. Depois do teste, conectaremos um banco gratuito
+persistente sem mudar o visual do site.
