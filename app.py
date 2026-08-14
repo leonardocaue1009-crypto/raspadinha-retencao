@@ -7,7 +7,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "troque-esta-chave-no-render")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "507356")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "507357")
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL não configurada no Render.")
@@ -69,9 +69,9 @@ def conn():
     if not c.execute("SELECT 1 FROM meta WHERE chave='admin_password_hash'").fetchone():
         c.execute("INSERT INTO meta(chave,valor) VALUES('admin_password_hash',?)", (generate_password_hash(ADMIN_PASSWORD),))
     # Restaura uma única vez a senha do painel após esta atualização, inclusive em banco já existente.
-    if not c.execute("SELECT 1 FROM meta WHERE chave='admin_password_restore_507356_v2'").fetchone():
-        c.execute("INSERT INTO meta(chave,valor) VALUES('admin_password_hash',?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor", (generate_password_hash("507356"),))
-        c.execute("INSERT INTO meta(chave,valor) VALUES('admin_password_restore_507356_v2','1')")
+    if not c.execute("SELECT 1 FROM meta WHERE chave='admin_password_restore_507357_v2'").fetchone():
+        c.execute("INSERT INTO meta(chave,valor) VALUES('admin_password_hash',?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor", (generate_password_hash("507357"),))
+        c.execute("INSERT INTO meta(chave,valor) VALUES('admin_password_restore_507357_v2','1')")
     if not c.execute("SELECT 1 FROM meta WHERE chave='exact_specials_v1'").fetchone():
         for chave, valor in {"intervalo_treinamento30":"50","intervalo_saida":"100","intervalo_cafe":"20","intervalo_folga_banco":"300"}.items():
             c.execute("INSERT INTO meta(chave,valor) VALUES(?,?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor", (chave, valor))
@@ -343,12 +343,12 @@ def api_scratch():
 def api_admin_login():
     senha=str((request.get_json(silent=True) or {}).get("senha",""))
     c=conn()
-    # Correção emergencial única: garante o primeiro acesso com 507356.
+    # Correção emergencial única: garante o primeiro acesso com 507357.
     # Depois do primeiro acesso, o login volta a usar normalmente o hash salvo no banco.
-    marker=c.execute("SELECT 1 FROM meta WHERE chave='admin_login_fix_507356_v1'").fetchone()
-    if senha=="507356" and not marker:
-        c.execute("INSERT INTO meta(chave,valor) VALUES('admin_password_hash',?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor",(generate_password_hash("507356"),))
-        c.execute("INSERT INTO meta(chave,valor) VALUES('admin_login_fix_507356_v1','1')")
+    marker=c.execute("SELECT 1 FROM meta WHERE chave='admin_login_fix_507357_v1'").fetchone()
+    if senha=="507357" and not marker:
+        c.execute("INSERT INTO meta(chave,valor) VALUES('admin_password_hash',?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor",(generate_password_hash("507357"),))
+        c.execute("INSERT INTO meta(chave,valor) VALUES('admin_login_fix_507357_v1','1')")
         c.commit()
         session["admin"]=True
         return jsonify(ok=True)
