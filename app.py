@@ -31,7 +31,7 @@ def conn():
         valor TEXT NOT NULL
     )""")
     defaults = {
-        "common_pos": "0", "common_cycle": "", "special_pos": "0", "special_cycle": "",
+        "common_pos": "0", "common_cycle": "", "special_pos": "0", "special_cycle": "", "special_next_cycle": "", "cycle_draw_count": "0",
         "intervalo_treinamento30": "50", "intervalo_saida": "100", "intervalo_cafe": "20",
         "intervalo_folga_banco": "300", "ciclo_doces": "7", "ciclo_trolls": "3",
         "peso_chocolate": "1", "peso_pirulito": "1", "peso_bala": "1",
@@ -47,6 +47,7 @@ def conn():
             c.execute("INSERT INTO meta(chave,valor) VALUES(?,?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor", (chave, valor))
         c.execute("UPDATE meta SET valor='0' WHERE chave='special_pos'")
         c.execute("UPDATE meta SET valor='' WHERE chave='special_cycle'")
+        c.execute("INSERT INTO meta(chave,valor) VALUES('special_next_cycle','') ON CONFLICT(chave) DO UPDATE SET valor=''")
         c.execute("INSERT INTO meta(chave,valor) VALUES('exact_specials_v1','1')")
     if not c.execute("SELECT 1 FROM meta WHERE chave='common_7_3_bala_v1'").fetchone():
         c.execute("INSERT INTO meta(chave,valor) VALUES('ciclo_doces','7') ON CONFLICT(chave) DO UPDATE SET valor='7'")
@@ -134,26 +135,67 @@ def build_special_cycle(c):
         if ok: return slots
     raise ValueError("Não foi possível combinar esses intervalos sem sobrepor prêmios. Aumente um ou mais valores.")
 
+
+def ensure_special_cycles(c):
+    """Garante que existam o ciclo especial atual e o próximo, permitindo previsão exata."""
+    L=special_cycle_length(c)
+    if L <= 0:
+        L=1
+    row=c.execute("SELECT valor FROM meta WHERE chave='special_cycle'").fetchone()
+    raw=row["valor"] if row else ""
+    current=raw.split(",") if raw else []
+    try:
+        pos=int((c.execute("SELECT valor FROM meta WHERE chave='special_pos'").fetchone() or {"valor":"0"})["valor"])
+    except:
+        pos=0
+    if len(current)!=L or pos>=L:
+        current=build_special_cycle(c)
+        pos=0
+        c.execute("INSERT INTO meta(chave,valor) VALUES('special_cycle',?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor",(",".join(current),))
+        c.execute("INSERT INTO meta(chave,valor) VALUES('special_pos','0') ON CONFLICT(chave) DO UPDATE SET valor='0'")
+    row=c.execute("SELECT valor FROM meta WHERE chave='special_next_cycle'").fetchone()
+    raw_next=row["valor"] if row else ""
+    nxt=raw_next.split(",") if raw_next else []
+    if len(nxt)!=L:
+        nxt=build_special_cycle(c)
+        c.execute("INSERT INTO meta(chave,valor) VALUES('special_next_cycle',?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor",(",".join(nxt),))
+    return current, nxt, pos, L
+
+def special_dashboard(c):
+    """Retorna quantas raspadinhas faltam, exatamente, para cada prêmio especial."""
+    current,nxt,pos,L=ensure_special_cycles(c)
+    out=[]
+    for nome,emoji,cat,chave,n in RAROS:
+        intervalo=meta_int(c,chave,0)
+        if intervalo<=0:
+            out.append({"nome":nome,"emoji":emoji,"categoria":cat,"intervalo":0,"faltam":None})
+            continue
+        faltam=None
+        for i in range(pos,L):
+            if current[i]==cat:
+                faltam=i-pos+1
+                break
+        if faltam is None:
+            for i,token in enumerate(nxt):
+                if token==cat:
+                    faltam=(L-pos)+i+1
+                    break
+        out.append({"nome":nome,"emoji":emoji,"categoria":cat,"intervalo":intervalo,"faltam":faltam})
+    return out
+
 def choose_prize(c):
     # Calendário GLOBAL: não reinicia por matrícula.
     # Cada prêmio especial aparece EXATAMENTE uma vez dentro de cada bloco do intervalo configurado.
-    L=special_cycle_length(c)
-    if L <= 0: L=1
-    row=c.execute("SELECT valor FROM meta WHERE chave='special_cycle'").fetchone()
-    raw=row["valor"] if row else ""
-    parts=raw.split(",") if raw else []
-    try: spos=int((c.execute("SELECT valor FROM meta WHERE chave='special_pos'").fetchone() or {"valor":"0"})["valor"])
-    except: spos=0
-    if len(parts)!=L or spos>=L:
-        parts=build_special_cycle(c); spos=0
-        c.execute("UPDATE meta SET valor=? WHERE chave='special_cycle'",(",".join(parts),))
+    parts,next_parts,spos,L=ensure_special_cycles(c)
     token=parts[spos] if spos < len(parts) else ""
     next_pos=spos+1
     if next_pos>=L:
         next_pos=0
-        # Gera um novo calendário aleatório para o próximo ciclo, mantendo as mesmas quantidades exatas.
-        novo=build_special_cycle(c)
-        c.execute("UPDATE meta SET valor=? WHERE chave='special_cycle'",(",".join(novo),))
+        # O próximo ciclo já estava definido, então o visor continua exato.
+        parts=next_parts
+        next_parts=build_special_cycle(c)
+        c.execute("UPDATE meta SET valor=? WHERE chave='special_cycle'",(",".join(parts),))
+        c.execute("UPDATE meta SET valor=? WHERE chave='special_next_cycle'",(",".join(next_parts),))
     c.execute("UPDATE meta SET valor=? WHERE chave='special_pos'",(str(next_pos),))
     if token:
         for nome,emoji,cat,chave in RAROS:
@@ -250,12 +292,13 @@ window.addEventListener("resize",()=>{if(!login.classList.contains("hidden")||cl
 ADMIN = r"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Painel ADM — Retenção</title><style>
 *{box-sizing:border-box}body{margin:0;background:#06111f;color:#fff;font-family:Arial,sans-serif}.wrap{max-width:1200px;margin:auto;padding:22px}.card{background:linear-gradient(145deg,#0d2942,#071525);border:1px solid #1cc8ff55;border-radius:20px;padding:22px;box-shadow:0 20px 70px #0005;margin-bottom:18px}h1,h2{margin-top:0}h1{color:#22d4ff}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}input,button,select{padding:11px 13px;border-radius:10px;border:1px solid #31516a;font-size:14px}input,select{background:#06111f;color:#fff}button{border:0;background:#12bfff;color:#03192a;font-weight:900;cursor:pointer}.danger{background:#ff6b7d}.warn{background:#ffc928}.secondary{background:#9db6c8}.muted{color:#9db6c8;font-size:13px}.hidden{display:none}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{padding:9px;border-bottom:1px solid #21405b;text-align:left}.pill{display:inline-block;padding:5px 9px;border-radius:99px;background:#183b59}.ok{color:#7dffae}.err{color:#ff8091}.stat{font-size:28px;font-weight:900;color:#ffc928}.actions{display:flex;gap:6px;flex-wrap:wrap}.actions button{padding:7px 9px}.search{min-width:280px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.cfg{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px}.cfg label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:#9db6c8}.cfg input{width:100%}.sub{color:#ffc928;font-weight:900;margin:12px 0 8px}@media(max-width:800px){.grid,.cfg{grid-template-columns:1fr}.tablewrap{overflow:auto}}
 </style></head><body><div class="wrap"><div class="card" id="gate"><h1>🔐 Painel do Supervisor</h1><div class="row"><input id="senha" type="password" placeholder="Senha ADM"><button onclick="logar()">ENTRAR</button></div><p id="loginmsg"></p></div><div id="painel" class="hidden">
-<div class="card"><h1>⚙️ Painel ADM — Raspadinha</h1><div class="row"><div><div class="muted">Colaboradores</div><div class="stat" id="nusers">0</div></div><div><div class="muted">Créditos disponíveis</div><div class="stat" id="ncredits">0</div></div><div><div class="muted">Prêmios registrados</div><div class="stat" id="nresults">0</div></div><button class="secondary" onclick="logout()">SAIR</button></div></div>
+<div class="card"><h1>⚙️ Painel ADM — Raspadinha</h1><div class="row"><div><div class="muted">Colaboradores</div><div class="stat" id="nusers">0</div></div><div><div class="muted">Créditos disponíveis</div><div class="stat" id="ncredits">0</div></div><div><div class="muted">Prêmios registrados</div><div class="stat" id="nresults">0</div></div><div><div class="muted">Raspadas desde o último reset</div><div class="stat" id="ncycle">0</div></div><button class="secondary" onclick="logout()">SAIR</button></div></div>
+<div class="card"><h2>⏱️ Próximos prêmios especiais</h2><p class="muted">Contagem exata a partir da próxima raspadinha. O botão “Resetar ciclo” abaixo volta esta contagem para zero sem apagar colaboradores, créditos ou histórico.</p><div id="nextprizes" class="cfg"></div></div>
 <div class="grid"><div class="card"><h2>🎟️ Créditos</h2><div class="row"><input id="mat" placeholder="Key"><button onclick="credito(1)">+1</button><button class="danger" onclick="credito(-1)">-1</button><input id="qtd" type="number" min="0" placeholder="Definir quantidade"><button onclick="setCredito()">DEFINIR</button></div><p id="msg"></p></div><div class="card"><h2>👤 Cadastrar / editar</h2><div class="row"><input id="cm" placeholder="Key"><input id="cn" placeholder="Nome completo"><button onclick="cad()">SALVAR</button></div><p class="muted">Para editar, use o botão Editar na tabela abaixo.</p></div></div>
 <div class="card"><h2>🎯 Frequência e regra dos prêmios</h2><p class="muted">Os prêmios especiais agora são controlados por quantidade EXATA no sistema inteiro, não por sorte independente. Ex.: “50” significa exatamente 1 daquele prêmio em cada bloco de 50 raspadinhas. A posição dentro do bloco é aleatória.</p><div class="sub">Prêmios especiais — 1 prêmio a cada N raspadinhas</div><div class="cfg"><label>30 min pausa treinamento — 1 a cada<input id="intervalo_treinamento30" type="number" min="1" step="1" value="50"></label><label>1h saída antecipada — 1 a cada<input id="intervalo_saida" type="number" min="1" step="1" value="100"></label><label>Pausa café — 1 a cada<input id="intervalo_cafe" type="number" min="1" step="1" value="20"></label><label>Folga banco de horas (a combinar) — 1 a cada<input id="intervalo_folga_banco" type="number" min="1" step="1" value="300"></label></div><p class="muted">Padrão atual: folga 1/300, pausa 30 min 1/50, saída antecipada 1/100 e pausa café 1/20. Alterar esses números reinicia apenas o calendário futuro dos especiais.</p><div class="sub">Regra dos prêmios comuns</div><div class="cfg"><label>Doces por ciclo<input id="ciclo_doces" type="number" min="0" step="1" value="7"></label><label>Trolls por ciclo<input id="ciclo_trolls" type="number" min="0" step="1" value="3"></label></div><div class="sub">Peso dentro de cada grupo</div><div class="cfg"><label>Chocolate<input id="peso_chocolate" type="number" min="0" step="0.1" value="1"></label><label>Pirulito<input id="peso_pirulito" type="number" min="0" step="0.1" value="1"></label><label>Bala<input id="peso_bala" type="number" min="0" step="0.1" value="1"></label><label>Aplausos<input id="peso_aplausos" type="number" min="0" step="0.1" value="1"></label><label>+5 de moral<input id="peso_moral" type="number" min="0" step="0.1" value="1"></label><label>Nada, mas você foi guerreiro<input id="peso_guerreiro" type="number" min="0" step="0.1" value="1"></label></div><div class="row" style="margin-top:14px"><button onclick="salvarConfig()">SALVAR CONFIGURAÇÕES</button><span id="cfgmsg" class="muted"></span></div></div>
 <div class="card"><h2>👥 Equipe</h2><input class="search" id="busca" placeholder="Pesquisar nome ou matrícula" oninput="renderUsers()"><div class="tablewrap" id="users"></div></div>
 <div class="card"><h2>🏆 Histórico de prêmios</h2><div class="row"><input class="search" id="buscaPremio" placeholder="Pesquisar histórico" oninput="renderResults()"><button class="danger" onclick="clearResults()">🧹 LIMPAR HISTÓRICO</button></div><div class="tablewrap" id="results"></div></div>
-<div class="grid"><div class="card"><h2>🔐 Alterar senha ADM</h2><div class="row"><input id="senhaAtual" type="password" placeholder="Senha atual"><input id="senhaNova" type="password" placeholder="Nova senha"><input id="senhaConf" type="password" placeholder="Confirmar nova senha"><button onclick="changePassword()">ALTERAR SENHA</button></div><p id="passmsg"></p></div><div class="card"><h2>⚠️ Limpeza do sistema</h2><p class="muted">Use com cuidado. “Zerar todos os créditos” zera apenas raspadinhas disponíveis. “Apagar tudo” apaga colaboradores e histórico.</p><div class="row"><button class="warn" onclick="resetCredits()">ZERAR TODOS OS CRÉDITOS</button><button class="danger" onclick="clearAll()">APAGAR TUDO</button></div></div></div>
+<div class="grid"><div class="card"><h2>🔐 Alterar senha ADM</h2><div class="row"><input id="senhaAtual" type="password" placeholder="Senha atual"><input id="senhaNova" type="password" placeholder="Nova senha"><input id="senhaConf" type="password" placeholder="Confirmar nova senha"><button onclick="changePassword()">ALTERAR SENHA</button></div><p id="passmsg"></p></div><div class="card"><h2>⚠️ Limpeza do sistema</h2><p class="muted">Use com cuidado. “Resetar ciclo” reinicia somente a contagem futura dos prêmios, sem apagar colaboradores, créditos ou histórico. “Zerar todos os créditos” zera apenas raspadinhas disponíveis. “Apagar tudo” apaga colaboradores e histórico.</p><div class="row"><button class="secondary" onclick="resetCycles()">🔄 RESETAR CICLO DE PRÊMIOS</button><button class="warn" onclick="resetCredits()">ZERAR TODOS OS CRÉDITOS</button><button class="danger" onclick="clearAll()">APAGAR TUDO</button></div></div></div>
 </div></div><script>
 let DATA={users:[],results:[]};const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 async function post(url,data){let r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})});let j=await r.json().catch(()=>({ok:false,msg:'Erro no servidor.'}));return{r,j}}
@@ -269,13 +312,15 @@ function delUser(m){if(confirm('Excluir este colaborador? O histórico de prêmi
 function delResult(id){if(confirm('Excluir este lançamento do histórico?'))post('/api/admin/result/delete',{id}).then(()=>load())}
 async function changePassword(){if(senhaNova.value!==senhaConf.value){passmsg.innerHTML='<span class=err>As novas senhas não conferem.</span>';return}let {j}=await post('/api/admin/password',{atual:senhaAtual.value,nova:senhaNova.value});passmsg.innerHTML=j.ok?'<span class=ok>'+esc(j.msg)+'</span>':'<span class=err>'+esc(j.msg)+'</span>';if(j.ok){senhaAtual.value=senhaNova.value=senhaConf.value=''}}
 async function clearResults(){if(confirm('Tem certeza que deseja APAGAR TODO o histórico de prêmios?')){let {j}=await post('/api/admin/clear',{mode:'results'});alert(j.msg);load()}}
+async function resetCycles(){if(confirm('Resetar o ciclo de prêmios e começar a contagem futura do zero? Isso NÃO apaga colaboradores, créditos nem histórico.')){let {j}=await post('/api/admin/clear',{mode:'cycles'});alert(j.msg);load()}}
 async function resetCredits(){if(confirm('Zerar os créditos de TODOS os colaboradores?')){let {j}=await post('/api/admin/clear',{mode:'credits'});alert(j.msg);load()}}
 async function clearAll(){if(confirm('ATENÇÃO: isso apagará TODOS os colaboradores, créditos e histórico. Continuar?')&&confirm('Última confirmação: APAGAR TUDO?')){let {j}=await post('/api/admin/clear',{mode:'all'});alert(j.msg);load()}}
 async function salvarConfig(){let cfg={};['intervalo_treinamento30','intervalo_saida','intervalo_cafe','intervalo_folga_banco','ciclo_doces','ciclo_trolls','peso_chocolate','peso_pirulito','peso_bala','peso_aplausos','peso_moral','peso_guerreiro'].forEach(k=>cfg[k]=document.getElementById(k).value);let {j}=await post('/api/admin/config',cfg);cfgmsg.innerHTML=j.ok?'<span class=ok>Configurações salvas.</span>':'<span class=err>'+esc(j.msg||'Erro ao salvar')+'</span>';if(j.ok)load()}
 function aplicarConfig(cfg){if(!cfg)return;Object.entries(cfg).forEach(([k,v])=>{let e=document.getElementById(k);if(e)e.value=v})}
 function renderUsers(){let q=busca.value.toLowerCase();let a=DATA.users.filter(x=>(x.nome+' '+x.matricula).toLowerCase().includes(q));users.innerHTML='<table><tr><th>Nome</th><th>Key</th><th>Créditos</th><th>Ações</th></tr>'+a.map(x=>`<tr><td>${esc(x.nome)}</td><td>${esc(x.matricula)}</td><td><span class=pill>${x.creditos}</span></td><td class=actions><button onclick="credito(1,\'${esc(x.matricula)}\')">+1</button><button class=warn onclick="editUser(\'${esc(x.matricula)}\')">Editar</button><button class=danger onclick="delUser(\'${esc(x.matricula)}\')">Excluir</button></td></tr>`).join('')+'</table>'}
 function renderResults(){let q=buscaPremio.value.toLowerCase();let a=DATA.results.filter(x=>(x.nome+' '+x.matricula+' '+x.premio+' '+x.data).toLowerCase().includes(q));results.innerHTML='<table><tr><th>Nome</th><th>Key</th><th>Prêmio</th><th>Data/Hora</th><th></th></tr>'+a.map(x=>`<tr><td>${esc(x.nome)}</td><td>${esc(x.matricula)}</td><td>${esc(x.premio)}</td><td>${esc(x.data)}</td><td><button class=danger onclick="delResult(${x.id})">Excluir</button></td></tr>`).join('')+'</table>'}
-async function load(){let r=await fetch('/api/admin/data');if(!r.ok){msg.innerHTML='<span class=err>Falha ao carregar dados do painel.</span>';return}DATA=await r.json();aplicarConfig(DATA.config);nusers.textContent=DATA.users.length;ncredits.textContent=DATA.users.reduce((a,x)=>a+x.creditos,0);nresults.textContent=DATA.total_results;renderUsers();renderResults()}setInterval(()=>{if(!painel.classList.contains('hidden'))load()},5000)
+function renderNextPrizes(){let a=DATA.proximos||[];nextprizes.innerHTML=a.map(x=>`<div style="background:#06111f;border:1px solid #31516a;border-radius:12px;padding:12px"><div style="font-size:22px">${esc(x.emoji||'🎯')}</div><div style="font-weight:900;margin:4px 0">${esc(x.nome)}</div><div class="muted">Regra: 1 a cada ${esc(x.intervalo)}</div><div style="font-size:20px;font-weight:900;color:#ffc928;margin-top:5px">${x.faltam==null?'Desativado':(x.faltam===1?'Sai na próxima raspadinha':`Faltam ${x.faltam} raspadinhas`)}</div></div>`).join('')}
+async function load(){let r=await fetch('/api/admin/data');if(!r.ok){msg.innerHTML='<span class=err>Falha ao carregar dados do painel.</span>';return}DATA=await r.json();aplicarConfig(DATA.config);nusers.textContent=DATA.users.length;ncredits.textContent=DATA.users.reduce((a,x)=>a+x.creditos,0);nresults.textContent=DATA.total_results;ncycle.textContent=DATA.cycle_draw_count||0;renderUsers();renderResults();renderNextPrizes()}setInterval(()=>{if(!painel.classList.contains('hidden'))load()},5000)
 </script></body></html>"""
 
 @app.get("/")
@@ -306,6 +351,10 @@ def api_scratch():
     c.execute("UPDATE users SET creditos=creditos-1 WHERE matricula=?",(m,))
     data = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     c.execute("INSERT INTO results(matricula,nome,premio,categoria,data) VALUES(?,?,?,?,?)",(m,u["nome"],p["nome"],p["categoria"],data))
+    atual=c.execute("SELECT valor FROM meta WHERE chave='cycle_draw_count'").fetchone()
+    try: draw_count=int(atual["valor"]) if atual else 0
+    except: draw_count=0
+    c.execute("INSERT INTO meta(chave,valor) VALUES('cycle_draw_count',?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor",(str(draw_count+1),))
     c.commit()
     return jsonify(ok=True,nome=p["nome"],emoji=p["emoji"],categoria=p["categoria"],creditos=u["creditos"]-1,data=data)
 
@@ -337,7 +386,12 @@ def api_admin_data():
     total=c.execute("SELECT COUNT(*) n FROM results").fetchone()["n"]
     keys=["intervalo_treinamento30","intervalo_saida","intervalo_cafe","intervalo_folga_banco","ciclo_doces","ciclo_trolls","peso_chocolate","peso_pirulito","peso_bala","peso_aplausos","peso_moral","peso_guerreiro"]
     config={k:(c.execute("SELECT valor FROM meta WHERE chave=?",(k,)).fetchone() or {"valor":""})["valor"] for k in keys}
-    return jsonify(ok=True,users=users,results=results,total_results=total,config=config)
+    row=c.execute("SELECT valor FROM meta WHERE chave='cycle_draw_count'").fetchone()
+    try: cycle_draw_count=int(row["valor"]) if row else 0
+    except: cycle_draw_count=0
+    proximos=special_dashboard(c)
+    c.commit()
+    return jsonify(ok=True,users=users,results=results,total_results=total,config=config,cycle_draw_count=cycle_draw_count,proximos=proximos)
 
 @app.post("/api/admin/config")
 def api_admin_config():
@@ -463,8 +517,16 @@ def api_admin_clear():
     if mode=="results": c.execute("DELETE FROM results"); msg="Histórico apagado."
     elif mode=="credits": c.execute("UPDATE users SET creditos=0"); msg="Todos os créditos foram zerados."
     elif mode=="all": c.execute("DELETE FROM results"); c.execute("DELETE FROM users"); msg="Colaboradores, créditos e histórico foram apagados."
+    elif mode=="cycles":
+        c.execute("INSERT INTO meta(chave,valor) VALUES('cycle_draw_count','0') ON CONFLICT(chave) DO UPDATE SET valor='0'")
+        c.execute("INSERT INTO meta(chave,valor) VALUES('special_next_cycle','') ON CONFLICT(chave) DO UPDATE SET valor=''")
+        msg="Ciclo de prêmios resetado. A próxima raspadinha inicia uma nova contagem a partir do zero."
     else: return jsonify(ok=False,msg="Opção inválida."),400
-    c.execute("UPDATE meta SET valor='0' WHERE chave='common_pos'"); c.execute("UPDATE meta SET valor='' WHERE chave='common_cycle'"); c.execute("UPDATE meta SET valor='0' WHERE chave='special_pos'"); c.execute("UPDATE meta SET valor='' WHERE chave='special_cycle'"); c.commit(); return jsonify(ok=True,msg=msg)
+    c.execute("UPDATE meta SET valor='0' WHERE chave='common_pos'"); c.execute("UPDATE meta SET valor='' WHERE chave='common_cycle'"); c.execute("UPDATE meta SET valor='0' WHERE chave='special_pos'"); c.execute("UPDATE meta SET valor='' WHERE chave='special_cycle'")
+    if mode in ("cycles","all"):
+        c.execute("INSERT INTO meta(chave,valor) VALUES('cycle_draw_count','0') ON CONFLICT(chave) DO UPDATE SET valor='0'")
+        c.execute("INSERT INTO meta(chave,valor) VALUES('special_next_cycle','') ON CONFLICT(chave) DO UPDATE SET valor=''")
+    c.commit(); return jsonify(ok=True,msg=msg)
 
 @app.get("/version")
 def version():
