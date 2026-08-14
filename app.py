@@ -165,7 +165,7 @@ def special_dashboard(c):
     """Retorna quantas raspadinhas faltam, exatamente, para cada prêmio especial."""
     current,nxt,pos,L=ensure_special_cycles(c)
     out=[]
-    for nome,emoji,cat,chave,n in RAROS:
+    for nome,emoji,cat,chave in RAROS:
         intervalo=meta_int(c,chave,0)
         if intervalo<=0:
             out.append({"nome":nome,"emoji":emoji,"categoria":cat,"intervalo":0,"faltam":None})
