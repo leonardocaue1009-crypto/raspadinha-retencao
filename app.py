@@ -342,18 +342,10 @@ def api_scratch():
 @app.post("/api/admin/login")
 def api_admin_login():
     senha=str((request.get_json(silent=True) or {}).get("senha",""))
-    c=conn()
-    # Correção emergencial única: garante o primeiro acesso com 507357.
-    # Depois do primeiro acesso, o login volta a usar normalmente o hash salvo no banco.
-    marker=c.execute("SELECT 1 FROM meta WHERE chave='admin_login_fix_507357_v1'").fetchone()
-    if senha=="507357" and not marker:
-        c.execute("INSERT INTO meta(chave,valor) VALUES('admin_password_hash',?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor",(generate_password_hash("507357"),))
-        c.execute("INSERT INTO meta(chave,valor) VALUES('admin_login_fix_507357_v1','1')")
-        c.commit()
-        session["admin"]=True
+    # Senha fixa de emergência: não depende do hash/marker já salvo no banco.
+    if senha == "507357":
+        session["admin"] = True
         return jsonify(ok=True)
-    row=c.execute("SELECT valor FROM meta WHERE chave='admin_password_hash'").fetchone()
-    if row and check_password_hash(row["valor"],senha): session["admin"]=True; return jsonify(ok=True)
     return jsonify(ok=False),403
 
 @app.post("/api/admin/logout")
