@@ -210,7 +210,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
 <div class="login" id="login"><div class="box"><div style="font-size:46px">🎟️</div><h1>Raspadinha do Time Retenção</h1>
 <p>Digite sua key. A raspadinha só será liberada se o supervisor tiver adicionado um crédito para você.</p>
 <input id="mat" inputmode="numeric" autocomplete="off" placeholder="Sua key"><button id="entrar">VERIFICAR RASPADINHA</button><div class="error" id="erro"></div></div></div>
-<div class="scratch" id="scratch"><div class="prize" id="prize"><div class="emoji">🎁</div><h2>BOA SORTE!</h2><p>Seu prêmio está aqui.</p></div><canvas id="cover"></canvas></div>
+<div class="scratch" id="scratch"><div class="prize" id="prize"></div><canvas id="cover"></canvas></div>
 <button class="retry hidden" id="retry" onclick="tentarNovamente()">TENTAR NOVAMENTE</button>
 <div class="status" id="status">Digite sua key para começar</div>
 </div>
@@ -238,7 +238,7 @@ async function claim(){
 }
 function tentarNovamente(){
  if(!premio||premio.creditos<1)return;
- claimed=false;scratched=0;scratching=false;premio=null;prize.className="prize";prize.innerHTML='<div class="emoji">🎁</div><h2>BOA SORTE!</h2><p>Seu prêmio está aqui.</p>';canvas.style.transition="none";canvas.style.opacity="1";canvas.style.display="block";retry.classList.add("hidden");statusEl.textContent="Raspe novamente para descobrir seu próximo prêmio";setTimeout(prepCover,30)
+ claimed=false;scratched=0;scratching=false;premio=null;prize.className="prize";prize.innerHTML='';canvas.style.transition="none";canvas.style.opacity="1";canvas.style.display="block";retry.classList.add("hidden");statusEl.textContent="Raspe novamente para descobrir seu próximo prêmio";setTimeout(prepCover,30)
 }
 entrar.onclick=verificar;mat.addEventListener("keydown",e=>{if(e.key==="Enter")verificar()});
 canvas.addEventListener("pointerdown",e=>{scratching=true;canvas.setPointerCapture?.(e.pointerId);erase(e)});
