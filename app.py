@@ -280,7 +280,7 @@ async function load(){let r=await fetch('/api/admin/data');if(!r.ok){msg.innerHT
 
 @app.get("/")
 def home():
-    return Response(HOME, mimetype="text/html")
+    return Response(HOME.replace("__POSTER_PLACEHOLDER__", POSTER_SRC), mimetype="text/html")
 
 @app.get("/admin")
 def admin():
