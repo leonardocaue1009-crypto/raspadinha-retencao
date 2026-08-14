@@ -118,22 +118,44 @@ def build_special_cycle(c):
     specs=special_intervals(c)
     if not specs: return [""]
     L=special_cycle_length(c)
-    if L <= 0: raise ValueError("Os intervalos escolhidos geram um ciclo muito grande. Use valores mais compatíveis entre si.")
-    # Tenta montar um calendário sem colisões. Em cada bloco de N posições há EXATAMENTE 1 unidade daquele prêmio.
-    for _ in range(250):
+    if L <= 0:
+        raise ValueError("Os intervalos escolhidos geram um ciclo muito grande. Use valores mais compatíveis entre si.")
+
+    # Cada prêmio recebe uma posição fixa (fase) dentro do intervalo.
+    # Assim, um prêmio 1/60 fica SEMPRE separado por exatamente 60 raspadinhas,
+    # e o visor nunca poderá mostrar mais de 60.
+    for _ in range(1200):
         slots=[""]*L
         ok=True
-        # Menores intervalos primeiro, pois têm mais blocos para preencher.
-        order=sorted(specs, key=lambda x:x[4])
-        for nome,emoji,cat,chave,n in order:
-            for ini in range(0,L,n):
-                livres=[i for i in range(ini,min(ini+n,L)) if not slots[i]]
-                if not livres:
-                    ok=False; break
-                slots[random.choice(livres)]=cat
-            if not ok: break
-        if ok: return slots
-    raise ValueError("Não foi possível combinar esses intervalos sem sobrepor prêmios. Aumente um ou mais valores.")
+        for nome,emoji,cat,chave,n in sorted(specs, key=lambda x:x[4]):
+            row=c.execute("SELECT valor FROM meta WHERE chave=?",("forcar_pos_"+cat,)).fetchone()
+            try:
+                forced=int(row["valor"]) if row and str(row["valor"]).strip() else 0
+            except:
+                forced=0
+
+            fases=[forced-1] if 1 <= forced <= n else list(range(n))
+            if not forced:
+                random.shuffle(fases)
+
+            escolhida=None
+            for fase in fases:
+                indices=list(range(fase,L,n))
+                if all(not slots[i] for i in indices):
+                    escolhida=fase
+                    break
+
+            if escolhida is None:
+                ok=False
+                break
+
+            for i in range(escolhida,L,n):
+                slots[i]=cat
+
+        if ok:
+            return slots
+
+    raise ValueError("Não foi possível montar o ciclo sem colisões com essas posições. Altere uma das posições forçadas ou os intervalos.")
 
 
 def ensure_special_cycles(c):
@@ -162,7 +184,7 @@ def ensure_special_cycles(c):
     return current, nxt, pos, L
 
 def special_dashboard(c):
-    """Retorna quantas raspadinhas faltam, exatamente, para cada prêmio especial."""
+    """Retorna a distância EXATA até a próxima ocorrência; nunca ultrapassa o intervalo configurado."""
     current,nxt,pos,L=ensure_special_cycles(c)
     out=[]
     for nome,emoji,cat,chave in RAROS:
@@ -170,16 +192,16 @@ def special_dashboard(c):
         if intervalo<=0:
             out.append({"nome":nome,"emoji":emoji,"categoria":cat,"intervalo":0,"faltam":None})
             continue
+
         faltam=None
-        for i in range(pos,L):
-            if current[i]==cat:
-                faltam=i-pos+1
+        # Com fase fixa, obrigatoriamente existe uma ocorrência dentro das próximas N raspadinhas.
+        for passo in range(1,intervalo+1):
+            idx=pos+passo-1
+            token=current[idx] if idx < L else nxt[idx-L]
+            if token==cat:
+                faltam=passo
                 break
-        if faltam is None:
-            for i,token in enumerate(nxt):
-                if token==cat:
-                    faltam=(L-pos)+i+1
-                    break
+
         out.append({"nome":nome,"emoji":emoji,"categoria":cat,"intervalo":intervalo,"faltam":faltam})
     return out
 
@@ -292,7 +314,7 @@ window.addEventListener("resize",()=>{if(!login.classList.contains("hidden")||cl
 ADMIN = r"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Painel ADM — Retenção</title><style>
 *{box-sizing:border-box}body{margin:0;background:#06111f;color:#fff;font-family:Arial,sans-serif}.wrap{max-width:1200px;margin:auto;padding:22px}.card{background:linear-gradient(145deg,#0d2942,#071525);border:1px solid #1cc8ff55;border-radius:20px;padding:22px;box-shadow:0 20px 70px #0005;margin-bottom:18px}h1,h2{margin-top:0}h1{color:#22d4ff}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}input,button,select{padding:11px 13px;border-radius:10px;border:1px solid #31516a;font-size:14px}input,select{background:#06111f;color:#fff}button{border:0;background:#12bfff;color:#03192a;font-weight:900;cursor:pointer}.danger{background:#ff6b7d}.warn{background:#ffc928}.secondary{background:#9db6c8}.muted{color:#9db6c8;font-size:13px}.hidden{display:none}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{padding:9px;border-bottom:1px solid #21405b;text-align:left}.pill{display:inline-block;padding:5px 9px;border-radius:99px;background:#183b59}.ok{color:#7dffae}.err{color:#ff8091}.stat{font-size:28px;font-weight:900;color:#ffc928}.actions{display:flex;gap:6px;flex-wrap:wrap}.actions button{padding:7px 9px}.search{min-width:280px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.cfg{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:10px}.cfg label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:#9db6c8}.cfg input{width:100%}.sub{color:#ffc928;font-weight:900;margin:12px 0 8px}@media(max-width:800px){.grid,.cfg{grid-template-columns:1fr}.tablewrap{overflow:auto}}
 </style></head><body><div class="wrap"><div class="card" id="gate"><h1>🔐 Painel do Supervisor</h1><div class="row"><input id="senha" type="password" placeholder="Senha ADM"><button onclick="logar()">ENTRAR</button></div><p id="loginmsg"></p></div><div id="painel" class="hidden">
-<div class="card"><h1>⚙️ Painel ADM — Raspadinha</h1><div class="row"><div><div class="muted">Colaboradores</div><div class="stat" id="nusers">0</div></div><div><div class="muted">Créditos disponíveis</div><div class="stat" id="ncredits">0</div></div><div><div class="muted">Prêmios registrados</div><div class="stat" id="nresults">0</div></div><div><div class="muted">Raspadas desde o último reset</div><div class="stat" id="ncycle">0</div></div><button class="secondary" onclick="logout()">SAIR</button></div></div>
+<div class="card"><h1>⚙️ Painel ADM — Raspadinha</h1><div class="row"><button onclick="location.href='/admin/controle'">🎛️ PAINEL DE POSIÇÕES</button><div><div class="muted">Colaboradores</div><div class="stat" id="nusers">0</div></div><div><div class="muted">Créditos disponíveis</div><div class="stat" id="ncredits">0</div></div><div><div class="muted">Prêmios registrados</div><div class="stat" id="nresults">0</div></div><div><div class="muted">Raspadas desde o último reset</div><div class="stat" id="ncycle">0</div></div><button class="secondary" onclick="logout()">SAIR</button></div></div>
 <div class="card"><h2>⏱️ Próximos prêmios especiais</h2><p class="muted">Contagem exata a partir da próxima raspadinha. O botão “Resetar ciclo” abaixo volta esta contagem para zero sem apagar colaboradores, créditos ou histórico.</p><div id="nextprizes" class="cfg"></div></div>
 <div class="grid"><div class="card"><h2>🎟️ Créditos</h2><div class="row"><input id="mat" placeholder="Key"><button onclick="credito(1)">+1</button><button class="danger" onclick="credito(-1)">-1</button><input id="qtd" type="number" min="0" placeholder="Definir quantidade"><button onclick="setCredito()">DEFINIR</button></div><p id="msg"></p></div><div class="card"><h2>👤 Cadastrar / editar</h2><div class="row"><input id="cm" placeholder="Key"><input id="cn" placeholder="Nome completo"><button onclick="cad()">SALVAR</button></div><p class="muted">Para editar, use o botão Editar na tabela abaixo.</p></div></div>
 <div class="card"><h2>🎯 Frequência e regra dos prêmios</h2><p class="muted">Os prêmios especiais agora são controlados por quantidade EXATA no sistema inteiro, não por sorte independente. Ex.: “50” significa exatamente 1 daquele prêmio em cada bloco de 50 raspadinhas. A posição dentro do bloco é aleatória.</p><div class="sub">Prêmios especiais — 1 prêmio a cada N raspadinhas</div><div class="cfg"><label>30 min pausa treinamento — 1 a cada<input id="intervalo_treinamento30" type="number" min="1" step="1" value="50"></label><label>1h saída antecipada — 1 a cada<input id="intervalo_saida" type="number" min="1" step="1" value="100"></label><label>Pausa café — 1 a cada<input id="intervalo_cafe" type="number" min="1" step="1" value="20"></label><label>Folga banco de horas (a combinar) — 1 a cada<input id="intervalo_folga_banco" type="number" min="1" step="1" value="300"></label></div><p class="muted">Padrão atual: folga 1/300, pausa 30 min 1/50, saída antecipada 1/100 e pausa café 1/20. Alterar esses números reinicia apenas o calendário futuro dos especiais.</p><div class="sub">Regra dos prêmios comuns</div><div class="cfg"><label>Doces por ciclo<input id="ciclo_doces" type="number" min="0" step="1" value="7"></label><label>Trolls por ciclo<input id="ciclo_trolls" type="number" min="0" step="1" value="3"></label></div><div class="sub">Peso dentro de cada grupo</div><div class="cfg"><label>Chocolate<input id="peso_chocolate" type="number" min="0" step="0.1" value="1"></label><label>Pirulito<input id="peso_pirulito" type="number" min="0" step="0.1" value="1"></label><label>Bala<input id="peso_bala" type="number" min="0" step="0.1" value="1"></label><label>Aplausos<input id="peso_aplausos" type="number" min="0" step="0.1" value="1"></label><label>+5 de moral<input id="peso_moral" type="number" min="0" step="0.1" value="1"></label><label>Nada, mas você foi guerreiro<input id="peso_guerreiro" type="number" min="0" step="0.1" value="1"></label></div><div class="row" style="margin-top:14px"><button onclick="salvarConfig()">SALVAR CONFIGURAÇÕES</button><span id="cfgmsg" class="muted"></span></div></div>
@@ -323,6 +345,35 @@ function renderNextPrizes(){let a=DATA.proximos||[];nextprizes.innerHTML=a.map(x
 async function load(){let r=await fetch('/api/admin/data');if(!r.ok){msg.innerHTML='<span class=err>Falha ao carregar dados do painel.</span>';return}DATA=await r.json();aplicarConfig(DATA.config);nusers.textContent=DATA.users.length;ncredits.textContent=DATA.users.reduce((a,x)=>a+x.creditos,0);nresults.textContent=DATA.total_results;ncycle.textContent=DATA.cycle_draw_count||0;renderUsers();renderResults();renderNextPrizes()}setInterval(()=>{if(!painel.classList.contains('hidden'))load()},5000)
 </script></body></html>"""
 
+
+CONTROL = r"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Controle de Posições — Retenção</title><style>
+*{box-sizing:border-box}body{margin:0;background:#06111f;color:#fff;font-family:Arial,sans-serif}.wrap{max-width:1000px;margin:auto;padding:22px}
+.card{background:linear-gradient(145deg,#0d2942,#071525);border:1px solid #1cc8ff55;border-radius:20px;padding:22px;box-shadow:0 20px 70px #0005;margin-bottom:18px}
+h1,h2{margin-top:0}h1{color:#22d4ff}.muted{color:#9db6c8;font-size:13px;line-height:1.45}.grid{display:grid;grid-template-columns:repeat(2,minmax(260px,1fr));gap:14px}
+.item{background:#06111f;border:1px solid #31516a;border-radius:14px;padding:15px}.item h3{margin:0 0 5px}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+input{width:130px;padding:10px;border-radius:10px;border:1px solid #31516a;background:#06111f;color:#fff}
+button,a.btn{display:inline-block;padding:11px 15px;border:0;border-radius:10px;background:#12bfff;color:#03192a;font-weight:900;cursor:pointer;text-decoration:none}.secondary{background:#9db6c8}.danger{background:#ff6b7d}
+.ok{color:#7dffae}.err{color:#ff8091}@media(max-width:700px){.grid{grid-template-columns:1fr}}
+</style></head><body><div class="wrap">
+<div class="card"><div class="row"><a class="btn secondary" href="/admin">← VOLTAR AO PAINEL ADM</a></div><h1>🎛️ Controle de posição dos prêmios</h1>
+<p class="muted">Este painel é separado do painel ADM principal. Aqui você pode escolher em qual posição do intervalo cada prêmio especial deverá sair.
+Exemplo: prêmio 1 a cada 60 + posição 25 = ele sai na posição 25 e depois novamente 60 raspadinhas depois. Deixe 0 para posição automática.</p></div>
+<div class="card"><div id="items" class="grid"></div><div class="row" style="margin-top:16px"><button onclick="save()">SALVAR POSIÇÕES E REINICIAR CICLO</button><button class="danger" onclick="auto()">VOLTAR TODAS PARA AUTOMÁTICO</button></div><p id="msg"></p></div>
+</div><script>
+const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+let DATA=[];
+async function load(){let r=await fetch('/api/admin/control/data');if(!r.ok){location.href='/admin';return}let j=await r.json();DATA=j.items||[];
+items.innerHTML=DATA.map(x=>`<div class="item"><h3>${esc(x.emoji)} ${esc(x.nome)}</h3><div class="muted">Regra atual: 1 a cada <b>${x.intervalo}</b></div>
+<div class="row" style="margin-top:10px"><label>Posição:</label><input id="p_${esc(x.categoria)}" type="number" min="0" max="${x.intervalo}" value="${x.posicao||0}"></div>
+<div class="muted" style="margin-top:6px">0 = automático • permitido: 1 até ${x.intervalo}</div></div>`).join('')}
+async function save(){let positions={};DATA.forEach(x=>positions[x.categoria]=document.getElementById('p_'+x.categoria).value);
+let r=await fetch('/api/admin/control/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({positions})});let j=await r.json().catch(()=>({ok:false,msg:'Erro'}));
+msg.innerHTML=j.ok?'<span class=ok>'+esc(j.msg)+'</span>':'<span class=err>'+esc(j.msg)+'</span>';if(j.ok)load()}
+async function auto(){if(!confirm('Voltar todas as posições para automático e reiniciar o ciclo?'))return;DATA.forEach(x=>document.getElementById('p_'+x.categoria).value=0);save()}
+load();
+</script></body></html>"""
+
 @app.get("/")
 def home():
     return Response(HOME, mimetype="text/html")
@@ -330,6 +381,59 @@ def home():
 @app.get("/admin")
 def admin():
     return Response(ADMIN, mimetype="text/html")
+
+@app.get("/admin/controle")
+def admin_controle():
+    if not is_admin():
+        return Response(ADMIN, mimetype="text/html")
+    return Response(CONTROL, mimetype="text/html")
+
+@app.get("/api/admin/control/data")
+def api_admin_control_data():
+    if not is_admin(): return jsonify(ok=False),403
+    c=conn()
+    items=[]
+    for nome,emoji,cat,chave in RAROS:
+        intervalo=meta_int(c,chave,0)
+        row=c.execute("SELECT valor FROM meta WHERE chave=?",("forcar_pos_"+cat,)).fetchone()
+        try: posicao=int(row["valor"]) if row and str(row["valor"]).strip() else 0
+        except: posicao=0
+        items.append({"nome":nome,"emoji":emoji,"categoria":cat,"intervalo":intervalo,"posicao":posicao})
+    return jsonify(ok=True,items=items)
+
+@app.post("/api/admin/control/save")
+def api_admin_control_save():
+    if not is_admin(): return jsonify(ok=False),403
+    j=request.get_json(silent=True) or {}
+    positions=j.get("positions") or {}
+    c=conn()
+
+    antigos={}
+    try:
+        for nome,emoji,cat,chave in RAROS:
+            intervalo=meta_int(c,chave,0)
+            row=c.execute("SELECT valor FROM meta WHERE chave=?",("forcar_pos_"+cat,)).fetchone()
+            antigos[cat]=row["valor"] if row else ""
+            raw=str(positions.get(cat,"0")).strip()
+            pos=int(raw or "0")
+            if pos<0 or pos>intervalo:
+                raise ValueError(f"{nome}: a posição deve ficar entre 0 e {intervalo}.")
+            c.execute("INSERT INTO meta(chave,valor) VALUES(?,?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor",("forcar_pos_"+cat,str(pos)))
+
+        # Testa antes de efetivar: se houver colisão impossível, desfaz.
+        c.execute("UPDATE meta SET valor='0' WHERE chave='special_pos'")
+        c.execute("UPDATE meta SET valor='' WHERE chave='special_cycle'")
+        c.execute("INSERT INTO meta(chave,valor) VALUES('special_next_cycle','') ON CONFLICT(chave) DO UPDATE SET valor=''")
+        atual=build_special_cycle(c)
+        proximo=build_special_cycle(c)
+        c.execute("INSERT INTO meta(chave,valor) VALUES('special_cycle',?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor",(",".join(atual),))
+        c.execute("INSERT INTO meta(chave,valor) VALUES('special_next_cycle',?) ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor",(",".join(proximo),))
+        c.execute("INSERT INTO meta(chave,valor) VALUES('cycle_draw_count','0') ON CONFLICT(chave) DO UPDATE SET valor='0'")
+        c.commit()
+        return jsonify(ok=True,msg="Posições salvas. O ciclo foi reiniciado do zero.")
+    except Exception as e:
+        c.rollback()
+        return jsonify(ok=False,msg=str(e)),400
 
 @app.post("/api/login")
 def api_login():
